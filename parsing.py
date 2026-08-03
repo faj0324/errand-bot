@@ -57,8 +57,23 @@ BARE_DAYPART_RE = re.compile(
     rf"\b(?:(this|tomorrow)\s+)?({DAYPART_WORDS})\b", re.IGNORECASE
 )
 
-# Split on commas, semicolons, newlines, "and", "then", "&", "plus".
-SPLIT_RE = re.compile(r",|;|\n|\+|&|\bthen\b|\band\b|\bplus\b", re.IGNORECASE)
+# dateparser reads "5pm" but not "5 pm", and ignores a bare hour entirely.
+LEAD_PREP = r"(?:before|by|at|around|until|till)"
+CLOCK_RE = re.compile(
+    rf"\b(?:{LEAD_PREP}\s+)?(\d{{1,2}})(?::(\d{{2}}))?\s*(am|pm)\b", re.IGNORECASE
+)
+BARE_HOUR_RE = re.compile(
+    rf"\b{LEAD_PREP}\s+(\d{{1,2}})(?::(\d{{2}}))?\b(?!\s*(?:am|pm|:))", re.IGNORECASE
+)
+
+# Split on punctuation and on the words people use to join errands together.
+SPLIT_RE = re.compile(
+    r",|;|\n|\+|&"
+    r"|\bthen\b|\band\b|\bplus\b|\balso\b|\bas well as\b"
+    r"|\bi\s+(?:should|need\s+to|have\s+to|must|gotta)\b"
+    r"|\bdon'?t\s+forget\s+to\b",
+    re.IGNORECASE,
+)
 
 # Filler that adds nothing once the item stands alone.
 LEAD_FILLER_RE = re.compile(
@@ -107,6 +122,35 @@ def _expand_daypart(text, phrase):
     end = start + len(phrase)
     trailing = TRAILING_DAYPART_RE.match(text, end)
     return text[start:trailing.end()] if trailing else phrase
+
+
+def _clock_time(text, now):
+    """Catch clock times dateparser misses: '5 pm' spaced, and a bare 'before 5'.
+
+    A bare hour is read the way people mean it on an errand list: 1-6 is the
+    afternoon, 7-12 the morning. "before 5" is 17:00, "by 9" is 09:00.
+    """
+    match = CLOCK_RE.search(text)
+    if match:
+        hour = int(match.group(1)) % 12
+        if match.group(3).lower() == "pm":
+            hour += 12
+        minute = int(match.group(2) or 0)
+    else:
+        match = BARE_HOUR_RE.search(text)
+        if not match:
+            return None
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        if hour > 23 or minute > 59:
+            return None
+        if 1 <= hour <= 6:
+            hour += 12
+
+    dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if dt < now:
+        dt += timedelta(days=1)
+    return dt, match.group(0)
 
 
 def _bare_daypart(text, now):
@@ -160,8 +204,10 @@ def extract_deadline(text, now=None):
         result = (dt, phrase)
         break
 
+    # dateparser first: it reads "tomorrow at 5pm" as one unit, which the
+    # regexes below would flatten to just the time.
     if result is None:
-        result = _bare_daypart(text, now)
+        result = _clock_time(text, now) or _bare_daypart(text, now)
         if result is None:
             return None, text
         dt, phrase = result
@@ -173,6 +219,21 @@ def extract_deadline(text, now=None):
     cleaned = re.sub(re.escape(phrase), " ", text, count=1, flags=re.IGNORECASE)
     cleaned = TRAIL_PREP_RE.sub("", re.sub(r"\s{2,}", " ", cleaned).strip())
     return dt, cleaned.strip()
+
+
+def _split_keyword_run(chunk):
+    """Split a run of bare shopping words: "Milk bread" -> ["Milk", "bread"].
+
+    Only applies when *every* word is a known item, so ordinary phrases like
+    "collect my passport" are left whole.
+    """
+    words = chunk.split()
+    if len(words) < 2:
+        return [chunk]
+    known = GROCERIES | PHARMACY
+    if all(w.strip(".,!?").lower() in known for w in words):
+        return words
+    return [chunk]
 
 
 def parse_message(text, now=None):
@@ -197,11 +258,12 @@ def parse_message(text, now=None):
         if not cleaned:
             continue
 
-        items.append(
-            {
-                "text": cleaned,
-                "category": categorize(cleaned),
-                "deadline": own_deadline or message_deadline,
-            }
-        )
+        for part in _split_keyword_run(cleaned):
+            items.append(
+                {
+                    "text": part,
+                    "category": categorize(part),
+                    "deadline": own_deadline or message_deadline,
+                }
+            )
     return items

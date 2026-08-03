@@ -62,5 +62,36 @@ items = parse_message("call mum", NOW)
 check("single item, no deadline", (items[0]["text"], items[0]["deadline"]),
       ("call mum", None))
 
+print("\nregressions from real phone use")
+check("'5 pm' spaced", extract_deadline("collect passport before 5 pm", NOW)[0],
+      datetime(2026, 8, 4, 17, 0))
+check("bare 'before 5' -> 17:00", extract_deadline("collect passport before 5", NOW)[0],
+      datetime(2026, 8, 4, 17, 0))
+check("bare 'by 9' -> 09:00", extract_deadline("post it by 9", NOW)[0],
+      datetime(2026, 8, 5, 9, 0))  # 09:00 today has passed at 10:00, so tomorrow
+check("'at 8' -> 08:00 tomorrow", extract_deadline("gym at 8", NOW)[0],
+      datetime(2026, 8, 5, 8, 0))
+check("'5:30 pm'", extract_deadline("meet at 5:30 pm", NOW)[0],
+      datetime(2026, 8, 4, 17, 30))
+check("'tomorrow at 5pm' keeps the day",
+      extract_deadline("call them tomorrow at 5pm", NOW)[0],
+      datetime(2026, 8, 5, 17, 0))
+check("'in 2 hours' still works", extract_deadline("leave in 2 hours", NOW)[0],
+      datetime(2026, 8, 4, 12, 0))
+check("bare number alone is not a time", extract_deadline("buy 6 eggs", NOW)[0], None)
+
+items = parse_message("Milk bread i should collect my passport also before 5 pm", NOW)
+check("splits on 'i should'/'also'", [i["text"] for i in items],
+      ["Milk", "bread", "collect my passport"])
+check("categories after split", [i["category"] for i in items],
+      ["groceries", "groceries", "errand"])
+check("deadline on all three", {i["deadline"] for i in items},
+      {datetime(2026, 8, 4, 17, 0)})
+check("keyword run splits", [i["text"] for i in parse_message("milk eggs bread", NOW)],
+      ["milk", "eggs", "bread"])
+check("ordinary phrase stays whole",
+      [i["text"] for i in parse_message("collect my passport", NOW)],
+      ["collect my passport"])
+
 print("\n" + ("ALL PASS" if not failures else f"{len(failures)} FAILED: {failures}"))
 raise SystemExit(1 if failures else 0)

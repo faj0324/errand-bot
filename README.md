@@ -80,8 +80,14 @@ python bot.py
 
 ## Parsing rules
 
-**Splitting** — on commas, semicolons, newlines, `and`, `then`, `&`, `plus`.
-Leading filler (`I need to`, `remind me to`, `please`) is stripped.
+**Splitting** — on commas, semicolons, newlines, `and`, `then`, `&`, `plus`,
+`also`, `as well as`, and phrases like `I should` / `I need to`. Leading filler
+(`I need to`, `remind me to`, `please`) is stripped.
+
+A run of bare shopping words with no punctuation is also split, so
+`milk bread` becomes two items — but only when *every* word is a known item, so
+`collect my passport` stays whole. The trade-off is that a dish name made of
+two ingredients, like `chicken rice`, splits into two.
 
 **Categories** — keyword sets. Pharmacy wins over groceries, so
 "milk and paracetamol" is a pharmacy trip, not a grocery run.
@@ -106,10 +112,16 @@ Vague times get a sensible hour instead of the current time:
 | `this afternoon` | 14:00 |
 | `this evening` | 18:00 |
 | `tonight` | 20:00 |
-| `before 6pm` | 18:00 |
+| `before 6pm` / `before 5 pm` | 18:00 / 17:00 |
+| `before 5` (bare hour) | 17:00 |
+| `by 9` (bare hour) | 09:00 |
 
-Two `dateparser` quirks are worked around: it matches `tomorrow` but drops the
-`morning` after it, and it does not recognise `tonight` at all.
+A bare hour is read the way people mean it on an errand list: 1-6 is the
+afternoon, 7-12 the morning. Any time already past rolls to the next day.
+
+Four `dateparser` gaps are worked around: it matches `tomorrow` but drops the
+`morning` after it, does not recognise `tonight` at all, reads `5pm` but not
+`5 pm` with a space, and ignores a bare hour like `before 5` entirely.
 
 Deadlines are stored as naive local time. Fine on one machine; this would need
 timezone handling to run on a server in another region.
